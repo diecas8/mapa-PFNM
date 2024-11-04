@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Predios PFNM, Casanare.</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet-measure/3.3.0/leaflet-measure.min.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+    <!-- FontAwesome para los iconos personalizados -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-measure/3.3.0/leaflet-measure.min.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+    <!-- SheetJS para la generación de archivos Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+</head>
+<body>
+    <h2>Predios PFNM, Casanare.</h2>
+    <div id="map" style="height: 600px; width: 100%;"></div>
+
+    <button onclick="exportToExcel()">Exportar a Excel</button>
+
+    <script>
+        // Crear el mapa centrado en Casanare, Colombia
+        var map = L.map('map').setView([5.3895, -72.3945], 7);
+
+        // Crear capas base
+        var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+        
+        var satelite = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png');
+        var blancoNegro = L.tileLayer('https://tiles.wmflabs.org/bw-mapnik/{z}/{x}/{y}.png');
+        
+        var baseMaps = {
+            "OSM": osm,
+            "Satelital": satelite,
+            "Blanco y Negro": blancoNegro
+        };
+
+        // Crear un grupo para los elementos dibujados
+        var drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+
+        // Definir la URL del archivo GeoJSON de Fincas
+        var geoJsonUrl1 = 'http://localhost:8000/fincasssss.geojson';
+
+        var geojsonLayer1;
+        var overlayMaps = { "Dibujos": drawnItems };
+
+        // Datos para la exportación a Excel
+        var exportData = [];
+
+        // Objeto para almacenar las capas filtradas
+        var layersByCadena = {};
+
+        // Función para obtener el color basado en el campo Nom_cadena
+        function getColorByNomCadena(nom_cadena) {
+            switch (nom_cadena) {
+                case "Cadena 1": return "#1f77b4"; // Azul
+                case "Cadena 2": return "#ff7f0e"; // Naranja
+                case "Cadena 3": return "#2ca02c"; // Verde
+                case "Cadena 4": return "#d62728"; // Rojo
+                default: return "#9467bd"; // Morado para otras cadenas
+            }
+        }
+
+        // Estilo de la capa según el campo Nom_cadena
+        function stylePredios(feature) {
+            return {
+                color: getColorByNomCadena(feature.properties.Nom_cadena), // Color basado en Nom_cadena
+                weight: 2,
+                opacity: 0.8,
+                fillOpacity: 0.4
+            };
+        }
+
+        // Función para resaltar al pasar el ratón
+        function highlightFeature(e) {
+            var layer = e.target;
+            layer.setStyle({
+                weight: 3,
+                color: '#FFA500', // Resaltado en color naranja
+                fillOpacity: 0.6
+            });
+        }
+
+        function resetHighlight(e) {
+            geojsonLayer1.resetStyle(e.target);
+        }
+
+        // Función para mostrar información en un popup con enlace a Google Maps
+        function onEachFeature(feature, layer) {
+            let popupContent = "<strong>Información:</strong><br>";
+            for (let property in feature.properties) {
+                popupContent += `<strong>${property}:</strong> ${feature.properties[property]}<br>`;
+            }
+            if (feature.geometry.type === "Point") {
+                var lat = feature.geometry.coordinates[1];
+                var lon = feature.geometry.coordinates[0];
+            } else {
+                var coordinates = feature.geometry.coordinates[0][0];
+                var lon = coordinates[0];
+                var lat = coordinates[1];
+            }
+            popupContent += `<a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank">Ver en Google Maps</a>`;
+            layer.bindPopup(popupContent);
+            layer.on({
+                mouseover: highlightFeature,
+                mouseout: resetHighlight
+            });
+
+            // Almacenar las capas por Nom_cadena
+            const cadena = feature.properties.Nom_cadena;
+            if (!layersByCadena[cadena]) {
+                layersByCadena[cadena] = L.layerGroup();
+            }
+            layersByCadena[cadena].addLayer(layer);
+        }
+
+        // Cargar y agregar el archivo GeoJSON de Fincas con estilo diferenciado
+        fetch(geoJsonUrl1)
+            .then(response => response.json())
+            .then(data => {
+                console.log("Archivo de fincas cargado correctamente.");
+                geojsonLayer1 = L.geoJSON(data, {
+                    style: stylePredios,
+                    onEachFeature: onEachFeature
+                });
+
+                // Añadir clustering
+                var markers = L.markerClusterGroup();
+                geojsonLayer1.eachLayer(function(layer) {
+                    markers.addLayer(layer);
+                });
+                map.addLayer(markers);
+
+                // Agregar al control de capas
+                overlayMaps["Predios PFNM"] = markers;
+                L.control.layers(baseMaps, overlayMaps).addTo(map);
+            })
+            .catch(error => console.log('Error al cargar el archivo GeoJSON de fincas:', error));
+
+        // Evento para agregar información del predio y propietario al marcador de geolocalización
+        map.on('locationfound', function(e) {
+            var lat = e.latlng.lat;
+            var lng = e.latlng.lng;
+
+            var userMarker = L.marker(e.latlng, {
+                icon: L.divIcon({
+                    html: '<i class="fas fa-map-marker-alt" style="color: red; font-size: 24px;"></i>',
+                    className: 'custom-marker',
+                    iconSize: [30, 42],
+                    iconAnchor: [15, 42]
+                })
+            }).addTo(map).bindPopup("Estás aquí. Ingresa la información de la finca.");
+
+            userMarker.on('click', function() {
+                var nombreFinca = prompt("Ingrese el nombre de la finca:");
+                var propietario = prompt("Ingrese el nombre del propietario:");
+
+                if (nombreFinca && propietario) {
+                    // Actualizar popup
+                    userMarker.bindPopup(`Nombre de Finca: ${nombreFinca}<br>Propietario: ${propietario}<br>Coordenadas: ${lat}, ${lng}`).openPopup();
+                    
+                    // Guardar datos en el array de exportación
+                    exportData.push({
+                        "Coordenadas": `${lat}, ${lng}`,
+                        "Nombre de la Finca": nombreFinca,
+                        "Propietario": propietario
+                    });
+                }
+            });
+        });
+
+        // Intentar obtener la geolocalización del usuario
+        map.locate({ setView: true, maxZoom: 16 });
+
+        // Evento para manejar errores de geolocalización
+        map.on('locationerror', function(e) {
+            console.error("Error al obtener la ubicación:", e.message);
+            alert("No se pudo encontrar tu ubicación. Asegúrate de que el GPS esté activado y que el navegador tenga permiso para acceder a la ubicación.");
+        });
+
+        // Función para exportar datos a Excel
+        function exportToExcel() {
+            if (exportData.length === 0) {
+                alert("No hay datos para exportar.");
+                return;
+            }
+
+            var worksheet = XLSX.utils.json_to_sheet(exportData);
+            var workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Predios");
+
+            // Descargar el archivo Excel
+            XLSX.writeFile(workbook, "Predios_PFNM_Casanare.xlsx");
+        }
+
+        // Agregar leyenda con casillas de verificación
+        var legend = L.control({ position: "bottomright" });
+        legend.onAdd = function () {
+            var div = L.DomUtil.create("div", "info legend");
+            div.innerHTML += "<h4>Filtros por Cadena</h4>";
+            Object.keys(layersByCadena).forEach(cadena => {
+                const color = getColorByNomCadena(cadena);
+                div.innerHTML += `
+                    <input type="checkbox" id="${cadena}" checked onchange="toggleLayer('${cadena}')">
+                    <label for="${cadena}" style="color: ${color}; font-weight: bold;">${cadena}</label><br>`;
+            });
+            return div;
+        };
+        legend.addTo(map);
+
+        // Función para mostrar u ocultar capas según el filtro
+        function toggleLayer(cadena) {
+            if (document.getElementById(cadena).checked) {
+                map.addLayer(layersByCadena[cadena]);
+            } else {
+                map.removeLayer(layersByCadena[cadena]);
+            }
+        }
+    </script>
+
+    <style>
+        .legend {
+            background: white;
+            padding: 10px;
+            line-height: 18px;
+            color: #333;
+            border-radius: 5px;
+        }
+        .legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin-right: 8px;
+            opacity: 0.7;
+        }
+        .custom-marker {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 30px;
+            height: 42px;
+        }
+    </style>
+</body>
+</html>
